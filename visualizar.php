@@ -1,67 +1,73 @@
-<?php
+<?php 
 session_start();
+date_default_timezone_set('America/Mexico_City'); // Ajusta según tu zona horaria
 
-// Configuración de la base de datos
-$host = 'localhost';
-$dbname = 'unibus';  // Nombre de la base de datos
-$username = 'root';
-$password = '';  // Ajusta según tu configuración
-$pdo = new PDO("mysql:host=$host;dbname=$dbname", $username, $password);
-$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+// Conexión a la base de datos
+$servername = "localhost"; // Cambia si es necesario
+$username = "root";        // Usuario de la BD
+$password = "";            // Contraseña de la BD
+$dbname = "unibus";        // Base de datos
 
-// Si index.php pregunta si hubo un escaneo
-if (isset($_GET['check'])) {
-    echo isset($_SESSION['escaneo']) ? $_SESSION['escaneo'] : "0";
-    exit;
+$conn = new mysqli($servername, $username, $password, $dbname);
+
+if ($conn->connect_error) {
+    die("Error de conexión: " . $conn->connect_error);
 }
 
-// Si index.php pide resetear la sesión
-if (isset($_GET['reset'])) {
-    $_SESSION['escaneo'] = "0"; // Reseteamos el estado del escaneo
-    exit;
-}
+// Procesar el QR escaneado
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $datos = explode('|', $_POST['qrData']);
 
-// Cuando se escanea un QR, guardamos el estado y recargamos la página
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['qr_data'])) {
-    // Extraemos los datos del QR
-    $datosQR = explode('|', $_POST['qr_data']);
-    $user_id = $datosQR[0]; // El ID del usuario desde el QR
-    $nombre_usuario = $datosQR[1]; // Nombre del usuario desde el QR
-    $fecha = date('Y-m-d');  // Fecha actual
-    $hora = date('H:i:s');   // Hora actual
+    if (count($datos) >= 8) {
+        $idQR = $datos[0];
+        $nombreCompleto = $datos[1];
+        $telefono = $datos[4];
+        $correo = $datos[5];
+        $fechaActual = date("Y-m-d");
+        $horaActual = date("H:i:s");
 
-    // Verificar si el usuario ya ha escaneado más de 2 veces hoy
-    $query = "SELECT * FROM escaneos WHERE IDQR = :user_id AND FECHA_ACTUAL = :fecha";
-    $stmt = $pdo->prepare($query);
-    $stmt->execute(['user_id' => $user_id, 'fecha' => $fecha]);
-    $resultado = $stmt->fetch(PDO::FETCH_ASSOC);
+        // Verificar cuántas veces ha escaneado hoy
+        $sql = "SELECT CONTADOR FROM registros WHERE IDQR = ? AND FECHA_ACTUAL = ?";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("ss", $idQR, $fechaActual);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $contador = 0;
 
-    if ($resultado) {
-        // Si ya hay un registro para el usuario en ese día, incrementamos el contador
-        if ($resultado['CONTADOR'] >= 2) {
-            $_SESSION['escaneo'] = "expirado"; // Indicamos que el pasaje expiró
-            echo "Has alcanzado el límite de escaneos para hoy. Expiró tu pasaje.";
-            exit;
+        if ($row = $result->fetch_assoc()) {
+            $contador = $row["CONTADOR"];
+        }
+
+        if ($contador < 2) {
+            $contador++; // Incrementa para identificar el primer o segundo escaneo
+
+            if ($contador == 1) {
+                // Primer escaneo: registrar hora de entrada
+                $mensaje = "¡Bienvenido a Unibus, $nombreCompleto! Disfruta de tu viaje.";
+                $sql = "INSERT INTO registros (IDQR, NOMBRE_COMPLETO, NUMERO, CORREO, FECHA_ACTUAL, HORA_ENTRADA, CONTADOR) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?)";
+                $stmt = $conn->prepare($sql);
+                $stmt->bind_param("ssssssi", $idQR, $nombreCompleto, $telefono, $correo, $fechaActual, $horaActual, $contador);
+            } else {
+                // Segundo escaneo: registrar hora de salida
+                $mensaje = "¡Disfruta tu viaje a casa, $nombreCompleto!";
+                $sql = "UPDATE registros SET HORA_SALIDA = ?, CONTADOR = ? WHERE IDQR = ? AND FECHA_ACTUAL = ?";
+                $stmt = $conn->prepare($sql);
+                $stmt->bind_param("siss", $horaActual, $contador, $idQR, $fechaActual);
+            }
+            $stmt->execute();
+
+            echo json_encode(["mensaje" => $mensaje, "estado" => "ok"]);
         } else {
-            // Si no ha alcanzado el límite, incrementamos el contador
-            $nuevoContador = $resultado['CONTADOR'] + 1;
-            $queryUpdate = "UPDATE escaneos SET CONTADOR = :nuevoContador WHERE IDQR = :user_id AND FECHA_ACTUAL = :fecha";
-            $stmtUpdate = $pdo->prepare($queryUpdate);
-            $stmtUpdate->execute(['nuevoContador' => $nuevoContador, 'user_id' => $user_id, 'fecha' => $fecha]);
+            echo json_encode(["mensaje" => "¡Ya has registrado los dos escaneos de hoy!", "estado" => "error"]);
         }
     } else {
-        // Si no hay registros, insertamos uno nuevo con contador 1
-        $queryInsert = "INSERT INTO escaneos (IDQR, FECHA_ACTUAL, CONTADOR) VALUES (:user_id, :fecha, 1)";
-        $stmtInsert = $pdo->prepare($queryInsert);
-        $stmtInsert->execute(['user_id' => $user_id, 'fecha' => $fecha]);
+        echo json_encode(["mensaje" => "Código QR inválido", "estado" => "error"]);
     }
-
-    // Guardamos el estado del escaneo en la sesión
-    $_SESSION['escaneo'] = "1";
-
-    echo "QR registrado";
-    exit;
+    exit();
 }
+
+$conn->close();
 ?>
 
 <!DOCTYPE html>
@@ -69,7 +75,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['qr_data'])) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Visualizador - Seguridad Mejorada</title>
+  <title>Unibus - Escáner QR</title>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <style>
     body {
@@ -79,123 +85,100 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['qr_data'])) {
       padding: 0;
       display: flex;
       justify-content: center;
-      align-items: center;
-      height: 100vh;
-      overflow: hidden;
-      flex-direction: column;
+      align-items: flex-start;
+      min-height: 100vh;
       text-align: center;
+      overflow-y: auto; /* Permite hacer scroll si es necesario */
     }
     .container {
-      max-width: 600px;
+      width: 90%;
+      max-width: 450px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+    }
+    .contenedor-cuadro {
+      background: #ffffff;
+      padding: 15px;
+      border-radius: 10px;
+      border: 2px solid #2c7a7b;
+      box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.2);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       width: 100%;
-      padding: 10px;
     }
     #camara {
       width: 100%;
-      border-radius: 10px;
-      border: 5px solid #2c7a7b;
-      max-height: 300px;
+      max-width: 300px;
+      aspect-ratio: 16/9;
+      border-radius: 8px;
+      border: 3px solid #2c7a7b;
+      object-fit: cover;
+      margin: 10px 0;
+    }
+    .logo-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      gap: 5px;
+    }
+    #logo {
+      max-width: 140px;
+    }
+    #logo3 {
+      max-width: 160px;
+      margin-top: -10px;
     }
     .mensaje {
-      font-size: 1.5rem;
-      color: #ffffff;
-      background-color: rgba(0, 0, 0, 0.7);
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      display: none;
-      justify-content: center;
-      align-items: center;
-      z-index: 9999;
-      text-align: center;
-      padding: 20px;
+      background-color: green;
+      padding: 15px;
+      color: white;
+      font-weight: bold;
       border-radius: 8px;
-    }
-    #datosQR {
-      text-align: center;
-      margin-top: 20px;
-    }
-    /* Ajuste para móviles */
-    @media (max-width: 600px) {
-      .container {
-        padding: 5px;
-      }
-      .mensaje {
-        font-size: 1.2rem;
-      }
-      #datosQR {
-        font-size: 0.9rem;
-      }
-      #camara {
-        max-height: 250px;
-      }
+      margin-top: 15px;
+      display: none;
+      width: 90%;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Visualizador - Seguridad Mejorada</h1>
-    <p>¡Escanea el código QR y visualiza los datos!</p>
-
-    <video id="camara" autoplay></video>
-    <canvas id="canvas" style="display:none;"></canvas>
-
-    <!-- Cuadro de mensaje que cubre toda la pantalla -->
-    <div class="mensaje" id="mensaje">
-      <p id="mensajeTexto"></p>
+    <div class="logo-container">
+      <img id="logo" src="imagenes/logo.png" alt="Logo de la empresa" />
     </div>
-
-    <div id="datosQR">
-      <p><strong>Nombre del Usuario:</strong> <span id="nombreUsuario">-</span></p>
-      <p><strong>Fecha:</strong> <span id="fechaUsuario">-</span></p>
-      <p><strong>Hora:</strong> <span id="horaUsuario">-</span></p>
+    <div class="contenedor-cuadro">
+      <p><strong>¡Escanea tu código QR y prepárate para un viaje seguro y cómodo!</strong></p>
+      <video id="camara" autoplay></video>
+      <canvas id="canvas" style="display:none;"></canvas>
+      <p><strong>¡Solo escanea el código QR y accede a toda la información de tu viaje!</strong></p>
+      <div class="mensaje" id="mensaje">
+        <p id="mensajeTexto"></p>
+      </div>
+    </div>
+    <div class="logo-container">
+      <img id="logo3" src="imagenes/logo3.png" alt="Otra imagen" />
     </div>
   </div>
 
   <script>
     function hablar(mensaje) {
-        const utterance = new SpeechSynthesisUtterance(mensaje);
-        utterance.lang = 'es-ES'; // Configura el idioma en español
-        speechSynthesis.speak(utterance);
+      const utterance = new SpeechSynthesisUtterance(mensaje);
+      utterance.lang = 'es-ES';
+      speechSynthesis.speak(utterance);
     }
 
-    function mostrarDatos(datos) {
-        // Enviar los datos del QR al servidor
-        fetch('visualizar.php', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: new URLSearchParams({
-            qr_data: datos.join('|')
-          })
-        })
-        .then(() => {
-            document.getElementById('nombreUsuario').textContent = datos[1]; // Muestra solo el nombre
-            document.getElementById('fechaUsuario').textContent = new Date().toLocaleDateString(); // Fecha actual
-            document.getElementById('horaUsuario').textContent = new Date().toLocaleTimeString(); // Hora actual
-
-            // Verifica si el pasaje ha expirado
-            const mensajeExpirado = <?php echo isset($_SESSION['escaneo']) && $_SESSION['escaneo'] == 'expirado' ? 'true' : 'false'; ?>;
-            if (mensajeExpirado) {
-                const mensaje = "Lo sentimos, pero tu QR ha expirado. Has alcanzado el límite de escaneos para hoy.";
-                document.getElementById('mensajeTexto').textContent = mensaje;
-                document.getElementById('mensaje').style.backgroundColor = 'red'; // Fondo rojo
-                document.getElementById('mensaje').style.display = 'flex';
-                hablar(mensaje); // Hablar el mensaje de expiración
-                setTimeout(() => location.reload(), 3000); // Recarga la página después de 3 segundos
-            } else {
-                const mensajeBienvenida = "¡Bienvenido a Unibus! Disfruta de tu viaje.";
-                document.getElementById('mensajeTexto').textContent = mensajeBienvenida;
-                document.getElementById('mensaje').style.backgroundColor = 'green'; // Fondo verde
-                document.getElementById('mensaje').style.display = 'flex';
-                hablar(mensajeBienvenida); // Hablar el mensaje de bienvenida
-                setTimeout(() => location.reload(), 2000); // Recarga la página después de 2 segundos
-            }
-        })
-        .catch(error => console.error('Error:', error));
+    function mostrarMensaje(mensaje, estado) {
+      document.getElementById('mensajeTexto').textContent = mensaje;
+      const mensajeBox = document.getElementById('mensaje');
+      mensajeBox.style.backgroundColor = estado === "ok" ? "green" : "red";
+      mensajeBox.style.display = 'block';
+      hablar(mensaje);
+      setTimeout(() => location.reload(), 3000);
     }
 
     const video = document.getElementById('camara');
@@ -203,7 +186,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['qr_data'])) {
     const context = canvas.getContext('2d');
     let escaneado = false;
 
-    // Acceso a la cámara frontal
     navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
       .then(stream => {
         video.srcObject = stream;
@@ -222,8 +204,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['qr_data'])) {
 
         if (qrCode) {
           escaneado = true;
-          const datos = qrCode.data.split('|');
-          mostrarDatos(datos);
+          fetch("", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: "qrData=" + encodeURIComponent(qrCode.data)
+          })
+          .then(response => response.json())
+          .then(data => mostrarMensaje(data.mensaje, data.estado))
+          .catch(error => console.error("Error:", error));
         }
       }
       requestAnimationFrame(scanQRCode);

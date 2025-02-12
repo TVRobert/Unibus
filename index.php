@@ -4,9 +4,9 @@ date_default_timezone_set('America/Mexico_City'); // Ajusta según tu zona horar
 
 // Conexión a la base de datos
 $servername = "localhost"; // Cambia si es necesario
-$username = "root"; // Usuario de la BD
-$password = ""; // Contraseña de la BD
-$dbname = "unibus"; // Base de datos
+$username = "root";        // Usuario de la BD
+$password = "";            // Contraseña de la BD
+$dbname = "unibus";        // Base de datos
 
 $conn = new mysqli($servername, $username, $password, $dbname);
 
@@ -39,25 +39,20 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
 
         if ($contador < 2) {
-            $contador++;
+            $contador++; // Incrementa para identificar el primer o segundo escaneo
 
             if ($contador == 1) {
+                // Primer escaneo: registrar hora de entrada
                 $mensaje = "¡Bienvenido a Unibus, $nombreCompleto! Disfruta de tu viaje.";
-            } else {
-                $mensaje = "¡Disfruta tu viaje a casa, $nombreCompleto!";
-            }
-
-            if ($contador == 1) {
-                $sql = "INSERT INTO registros (IDQR, NOMBRE_COMPLETO, NUMERO, CORREO, FECHA_ACTUAL, HORA_ACTUAL, CONTADOR) 
+                $sql = "INSERT INTO registros (IDQR, NOMBRE_COMPLETO, NUMERO, CORREO, FECHA_ACTUAL, HORA_ENTRADA, CONTADOR) 
                         VALUES (?, ?, ?, ?, ?, ?, ?)";
-            } else {
-                $sql = "UPDATE registros SET HORA_ACTUAL = ?, CONTADOR = ? WHERE IDQR = ? AND FECHA_ACTUAL = ?";
-            }
-
-            $stmt = $conn->prepare($sql);
-            if ($contador == 1) {
+                $stmt = $conn->prepare($sql);
                 $stmt->bind_param("ssssssi", $idQR, $nombreCompleto, $telefono, $correo, $fechaActual, $horaActual, $contador);
             } else {
+                // Segundo escaneo: registrar hora de salida
+                $mensaje = "¡Disfruta tu viaje a casa, $nombreCompleto!";
+                $sql = "UPDATE registros SET HORA_SALIDA = ?, CONTADOR = ? WHERE IDQR = ? AND FECHA_ACTUAL = ?";
+                $stmt = $conn->prepare($sql);
                 $stmt->bind_param("siss", $horaActual, $contador, $idQR, $fechaActual);
             }
             $stmt->execute();
@@ -95,7 +90,6 @@ $conn->close();
       text-align: center;
       overflow-y: auto; /* Permite hacer scroll si es necesario */
     }
-
     .container {
       width: 90%;
       max-width: 450px;
@@ -105,7 +99,6 @@ $conn->close();
       align-items: center;
       gap: 15px;
     }
-
     .contenedor-cuadro {
       background: #ffffff;
       padding: 15px;
@@ -118,7 +111,6 @@ $conn->close();
       justify-content: center;
       width: 100%;
     }
-
     #camara {
       width: 100%;
       max-width: 300px;
@@ -128,7 +120,6 @@ $conn->close();
       object-fit: cover;
       margin: 10px 0;
     }
-
     .logo-container {
       display: flex;
       flex-direction: column;
@@ -136,16 +127,13 @@ $conn->close();
       width: 100%;
       gap: 5px;
     }
-
     #logo {
       max-width: 140px;
     }
-
     #logo3 {
       max-width: 160px;
       margin-top: -10px;
     }
-
     .mensaje {
       background-color: green;
       padding: 15px;
@@ -156,7 +144,6 @@ $conn->close();
       display: none;
       width: 90%;
     }
-
   </style>
 </head>
 <body>
